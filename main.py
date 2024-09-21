@@ -3,6 +3,29 @@ import numpy as np
 import copy
 import random
 import math
+import time
+
+
+def NumToList(t):
+
+        final_list = []
+        for i in range(4):
+            if(t%2 == 1):
+                final_list.append('1')
+            else:
+                final_list.append('0')
+            t /= 2
+        
+        return final_list
+    
+def ListToNum(l):
+
+    num = 0
+
+    for i in range(4):
+        if(l[i] == '1'):
+            num += (1<<i)
+    return num
 
 
 # Base class representing the Physical Layer in a communication system
@@ -163,6 +186,9 @@ class PhysicalLayer:
             # Append the determined bit to the bit array
             bit_array.append(bit)
 
+
+
+
         # Initialize sums for the first and second halves of the bit array
         firstHalfSum = 0
         secondHalfSum = 0
@@ -191,6 +217,10 @@ class PhysicalLayer:
         sum = firstHalfSum + secondHalfSum
         len_f = len1 + len2
 
+
+        if len_f == 0:
+            return '2'
+
         # Determine the final bit value based on the sum of decoded bits:
         # - If sum > len_f / 2: Most chunks have a dominant frequency nearer to f1, return '1'.
         # - If sum < len_f / 2: Most chunks have a dominant frequency nearer to f0, return '0'.
@@ -208,54 +238,6 @@ class PhysicalLayer:
             return '1'
 
 
-
-def xor(a,b):
-    """
-    Performs a bitwise XOR operation between two binary strings.
-
-    Parameters:
-        a (str): The first binary string.
-        b (str): The second binary string.
-
-    Returns:
-        str: The result of the XOR operation as a binary string.
-    """
-
-    ans = ""
-    for i in range(len(a)):
-        if( a[i]  != b[i]):
-            ans += '1'
-        else:
-            ans += '0'
-    return ans
-
-def remainder(a, b):
-    """
-    Calculates the remainder of the binary division of 'a' by 'b', used in CRC.
-
-    Parameters:
-        a(str) : The binary dividend.
-        b(str) : The binary divisor (CRC polynomial).
-
-    Returns:
-        str: The remainder after the division.
-    """
-
-    w =  a[:len(b) - 1]
-    for i in range(len(a) - len(b)+1):
-        w += a[i + len(b) - 1]
-        
-        # Determine whether to XOR with '0' or 'b' based on the leading bit
-        if(w[0] == '0'):
-            y = ['0'] * len(b)
-            x = ''.join(y)
-        else:
-            x = b
-        
-        # Update the working string with the XOR result, removing the leading bit
-        w = xor(w,x)[1:]
-    
-    return w
 
 
 # Data Link Layer class extending the Physical Layer
@@ -276,180 +258,152 @@ class DLL(PhysicalLayer):
         # Call the base class (PhysicalLayer) constructor
         PhysicalLayer.__init__(self,sample_rate,duration,f0,f1,amplitute)
 
-        # CRC polynomial for error detection
-        self.crc_poly = "11111011101" # Example CRC polynomial
-        self.crc_degree = 10 #Degree of CRC polynomial
-
-        # Synchronization pattern to identify the start of a frame
-        self.syncBits = ['0','0','0','0','1','0','1','0']
+        self.RTS_preamble = ['0','0']
+        self.CTS_preamble = ['0','1']
+        self.data_preamble = ['1','0']
+        self.ACK_preamble = ['1','1']
+        self.id = ['1','0']
+        self.process_time = 0.5
+        self.DIFS = 0.25
+        self.SIFS= 0.125
+        self.bit = '0'
+        self.check_time = 0.25
 
 
     
-    def findErrorBits(self,data):
-        """
-        Identifies the positions of erroneous bits in the received data using CRC.
-
-        Parameters:
-            data (list of str): The received data bits (including CRC remainder).
-
-        Returns:
-            list of int: The indices of bits that are erroneous.
-        """
-
-        # Calculate the remainder of the received data with the CRC polynomial
-        rem = remainder( ''.join(data),self.crc_poly)
-        l = len(data)
-
-        s = ['0'] * l
-
-        # Search for single-bit and double-bit errors that produce the same remainder
-        for i in range(l-1):
-            s[i] = '1'
-            for j in range(i+1,l):
-                s[j] = '1'
-
-                # If the CRC remainder matches, return the error bit positions
-                if( remainder(''.join(s),self.crc_poly) == rem ):
-                    return [i,j]
-                s[j] = '0'
-            s[i] = '0'
-                
-        # Check for single-bit errors
-        for i in range(l):
-            s[i] = '1'
-
-            if ( remainder(''.join(s),self.crc_poly) == rem ):
-                return [i]
-            s[i] = '0'
+    
+    def send_RTS( self, reciver_id , data):
         
-        # Check for single-bit errors
-        return []
+        RTS_sent = 0
+        time_req = np.ceil( (len(data) + 10)*self.duration + self.process_time )
+        RTS = self.RTS_preamble +self.id + reciver_id + NumToList(time_req)
+        
+        self.transmit(RTS)
+    
+    def send_CTS( self, reciver_id ,t):
+        
+        RTS_sent = 0
+        time_req = t + self.process_time  - 10*self.duration
+        RTS = self.RTS_preamble +self.id + reciver_id + NumToList(time_req)
+        
+        self.transmit(RTS)
             
 
-    def decode(self,data):
-        """
-        Decodes the received data by correcting any detected errors.
+    def recive_CTS(self,reciver_id):
 
-        Parameters:
-            data (list of str): The received data bits (including CRC remainder).
+        CTS_recived = 0
+        start_time = time.time()
+        buff = ['2','2']
 
-        Returns:
-            list of str: The corrected data bits (excluding CRC remainder).
-        """
-        
-        # Identify error bits
-        error_indices = self.findErrorBits(data)
+        while time.time()-start_time < self.check_time:
+            
+ 
+            bit = self.read_signal()
+            buff = buff[1 : ] + [bit]
 
-        new_data = copy.deepcopy(data)
-
-        for index in error_indices:
-            if new_data[index] == '1':
-                new_data[index] = '0'
-            else:
-                new_data[index] = '1'
-        
-        # Return the corrected data (excluding the CRC remainder)
-        actual_data = new_data[ : len(new_data)-self.crc_degree]
-        return actual_data
+            if ( buff == self.CTS_preamble):
+                sender = [self.read_signal() , self.read_signal()]
+                reciver = [self.read_signal() , self.read_signal()]
+                if( sender == reciver_id and reciver == self.id ):
+                    CTS_recived = 1
+                    break
+        return CTS_recived
 
     
-    def recieve(self):
-        """
-        Receives data from the physical layer by detecting the synchronization pattern
-        and then reading and decoding the data bits.
+    def CheckForAcg(self,reciver_id):
 
-        Returns:
-            list of str: The received and corrected data bits.
-        """
+        ack_got = 0
 
-        recived_bits = []
+        start_time = time.time()
+        buff = ['2','2']
 
-        # Initialize a buffer to store the last 4 received bits for synchronization detection
-        last4bits = ['0','0','0','0']
+        while time.time()-start_time < self.check_time:
+            
+            
+            bit = self.read_signal()
+            buff = buff[1 : ] + [bit]
 
-        # Wait for the synchronization pattern to be detected
+            if ( buff == self.ACK_preamble):
+                sender = [self.read_signal() , self.read_signal()]
+                reciver = [self.read_signal() , self.read_signal()]
+                if( sender == reciver_id and reciver == self.id ):
+                    ack_got = 1
+        
+        return ack_got
+    
+    def carrierSense(self):
+        
         while(True):
-            bit =   self.read_signal()
-            last4bits = last4bits[1:]+[bit]
-            if(last4bits == ['1','0','1','0']): # Sync Pattern Detected
+                
+            
+            buff =  ['2','2']
+            wait_time = 0
+
+            start_time = time.time()
+            present_time = start_time
+
+            while( present_time-start_time < self.DIFS ):
+
+                bit = self.read_signal()
+                buff = buff[1 : ] + [bit]
+
+                if ( buff[0] != '2' and buff[1] != '2' ):
+                    
+                    if ( buff == self.RTS_preamble or buff == self.CTS_preamble):
+                        sender_id = [self.read_signal(),self.read_signal()]
+                        reciver_id = [self.read_signal(),self.read_signal()]
+                        wait_time = ListToNum([self.read_signal() ,self.read_signal(),self.read_signal(),self.read_signal()])
+                    break
+
+                present_time = time.time()
+            
+            
+            time.sleep(wait_time)
+
+            if( present_time-start_time >= self.DIFS):
                 break
-        
-        # Determine the length of the incoming data
-        
-        length = 0
-
-        for i in range(5): # Length is transmitted in first 5 bits
-            bit = self.read_signal()
-            length += (2**(i))*int(bit)
-        
-
-        # Receive the actual data bits based on the determined length
-        for i in range(length):
-            bit = self.read_signal()
-            recived_bits.append(bit)
-
-        # Decode and return the actual data
-        return self.decode(recived_bits)
-    
-    def encode(self,data):
-        """
-        Encodes the data by appending CRC remainder and prepares the final codeword.
-
-        Parameters:
-            data (list of str): The data bits to be transmitted.
-
-        Returns:
-            list of str: The final codeword including the data and CRC remainder.
-        """
-        
-        # Create a temporary string of data followed by CRC bits initialized to '0'
-        temp = ''.join(data) + '0'*(self.crc_degree)
-    
-        # Caluclate final CRC code word    
-        final_codeWord  = ''.join(data) + remainder(temp,self.crc_poly)
-
-        return list(final_codeWord)
-        
-
-    def finalData(self,data):
-        """
-        Prepares the final data to be transmitted by adding synchronization bits
-        and the length of the data.
-
-        Parameters:
-            data (list of str): The data bits to be transmitted.
-
-        Returns:
-            list of str: The final data bits ready for transmission.
-        """
-
-        # Encode the data with CRC
-        finalCodeWord = self.encode(data)
-
-        # Calculate the length of the encoded data
-        l = len(finalCodeWord)
-
-        # Start with the synchronization pattern
-        final_data = copy.deepcopy(self.syncBits)
-
-        # Append the length information (5 bits)
-        for i in range(5):
-            final_data.append(f'{l%2}')
-            l = int(l/2)
-        
-        # Append the Final CodeWord
-        final_data += finalCodeWord
-        return final_data
 
 
-    def send_data(self , data):
+
+    def send_data(self , data , reciver_id):
         """
         Sends the encoded data through the physical layer.
 
         Parameters:
             data (list of str): The data bits to be transmitted.
         """
-        self.transmit(data)
+
+        actual_data = self.data_preamble + self.id + reciver_id + NumToList(len(data)) + [self.bit] + data
+
+
+
+        while(True):
+            
+            time.sleep(random.randint(1,5)*self.DIFS)
+            
+            self.carrierSense()
+            
+            RTS_sent_succesful = 0
+
+            while(not RTS_sent_succesful):
+                self.send_RTS(reciver_id,data)
+                time.sleep(self.SIFS)
+                RTS_sent_succesful = self.recive_CTS(reciver_id)
+            
+            self.transmit(actual_data)
+
+            time.sleep(self.SIFS)
+
+            if(self.CheckForAcg(reciver_id) == 1):
+                break
+        
+
+        if ( self.bit == '0'):
+            self.bit = '1'
+        else:
+            self.bit = '0'
+            
+
 
 
 
