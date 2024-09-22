@@ -5,7 +5,7 @@ import random
 import math
 import time
 
-
+# Base class representing the Physical Layer in a communication system
 def NumToList(t):
 
         final_list = []
@@ -18,7 +18,7 @@ def NumToList(t):
         
         return final_list
     
-def ListToNum(l):
+def listtoNum(l):
 
     num = 0
 
@@ -26,9 +26,6 @@ def ListToNum(l):
         if(l[i] == '1'):
             num += (1<<i)
     return num
-
-
-# Base class representing the Physical Layer in a communication system
 class PhysicalLayer:
 
     # Constructor to intialize parameters for signal creation
@@ -107,6 +104,7 @@ class PhysicalLayer:
 
             # Write the generated signal to the audio output stream
             self.stream.write(signal.astype(np.float32).tobytes())
+        print("transmit",bits)
 
 
     def read_signal(self):
@@ -134,110 +132,167 @@ class PhysicalLayer:
 
     def decode_signal(self, signal):
 
-        """
-        Decodes a received audio signal into a corresponding bit.
+            """
+            Decodes a received audio signal into a corresponding bit.
 
-        Parameters:
-            signal (np.ndarray): The received audio signal as a NumPy array.
+            Parameters:
+                signal (np.ndarray): The received audio signal as a NumPy array.
 
-        Returns:
-            str: The decoded bit ('0' or '1').
-        """
-        # Initialize an array to store the dominant bits determined from signal chunks
-        bit_array = []
-        num_chunks = 10  # Number of chunks to divide the signal into
+            Returns:
+                str: The decoded bit ('0' or '1').
+            """
+            # Initialize an array to store the dominant bits determined from signal chunks
+            bit_array = []
+            num_chunks = 10  # Number of chunks to divide the signal into
 
-        # Determine the size of each chunk
-        chunk_size = int(len(signal) / num_chunks)
+            # Determine the size of each chunk
+            chunk_size = int(len(signal) / num_chunks)
 
-        # Iterate through the signal in chunks to analyze its frequency content
-        for i in range(0, int(self.duration * self.sample_rate), int(chunk_size)):
-            
-            # Extract a chunk of the signal for analysis
-            signal_chunk = signal[i: i + chunk_size]
+            # Iterate through the signal in chunks to analyze its frequency content
+            for i in range(0, int(self.duration * self.sample_rate), int(chunk_size)):
+                
+                # Extract a chunk of the signal for analysis
+                signal_chunk = signal[i: i + chunk_size]
 
-            # Compute the Fast Fourier Transform (FFT) of the chunk to get frequency components
-            fft_values = np.fft.fft(signal_chunk)
+                # Compute the Fast Fourier Transform (FFT) of the chunk to get frequency components
+                fft_values = np.fft.fft(signal_chunk)
 
-            # Get the corresponding frequency values for the FFT components
-            frequencies = np.fft.fftfreq(len(signal_chunk), d=1/self.sample_rate)
+                # Get the corresponding frequency values for the FFT components
+                frequencies = np.fft.fftfreq(len(signal_chunk), d=1/self.sample_rate)
+                # print(frequencies)
+                # Define the frequency ranges of interest around f0 and f1
+                range_f0 = (self.f0 - 100, self.f0 + 100)
+                range_f1 = (self.f1 - 100, self.f1 + 100)
 
-            # Define the frequency ranges of interest around f0 and f1
-            range_f0 = (self.f0 - 100, self.f0 + 100)
-            range_f1 = (self.f1 - 100, self.f1 + 100)
+                # Filter out the FFT values that fall within the range of f0
+                # print(range_f0[0])
+                # print(frequencies[5])
+                indices_f0 = np.where((frequencies >= range_f0[0]) & (frequencies <= range_f0[1]))[0]
+                # print(indices_f0)
+                # Filter out the FFT values that fall within the range of f1
+                indices_f1 = np.where((frequencies >= range_f1[0]) & (frequencies <= range_f1[1]))[0]
+                # print(len(indices_f1))
+                # If no relevant frequencies are found, append -1 to indicate no valid detection
+    # Calculate max values if the arrays are non-empty
+                max_f0 = np.max(np.abs(fft_values[indices_f0])) if indices_f0.size > 0 else float('-inf')
+                max_f1 = np.max(np.abs(fft_values[indices_f1])) if indices_f1.size > 0 else float('-inf')
+                # print(max_f0,max_f1)
+                # Compare both max values
+                if max(max_f0, max_f1) < 15:
+                    bit_array.append(-1)
+                    continue
 
-            # Filter out the FFT values that fall within the range of f0
-            indices_f0 = np.where((frequencies >= range_f0[0]) & (frequencies <= range_f0[1]))[0]
-            
-            # Filter out the FFT values that fall within the range of f1
-            indices_f1 = np.where((frequencies >= range_f1[0]) & (frequencies <= range_f1[1]))[0]
+                # Determine the final bit by comparing which range has a stronger signal
+                if np.max(np.abs(fft_values[indices_f0])) >= np.max(np.abs(fft_values[indices_f1])):
+                    # print(np.max(np.abs(fft_values[indices_f0])),np.max(np.abs(fft_values[indices_f1])))
+                    bit = 0  # Frequency nearer to f0 is dominant, representing bit '0'
+                else:
+                    bit = 1  # Frequency nearer to f1 is dominant, representing bit '1'
+                
+                # Append the determined bit to the bit array
+                bit_array.append(bit)
 
-            # If no relevant frequencies are found, append -1 to indicate no valid detection
-            if len(indices_f0) + len(indices_f1) == 0:
-                bit_array.append(-1)
-                continue
 
-            # Determine the final bit by comparing which range has a stronger signal
-            if np.max(np.abs(fft_values[indices_f0])) >= np.max(np.abs(fft_values[indices_f1])):
-                bit = 0  # Frequency nearer to f0 is dominant, representing bit '0'
+
+
+            # Initialize sums for the first and second halves of the bit array
+            firstHalfSum = 0
+            secondHalfSum = 0
+
+            # Initialize counters for the number of valid bits in each half
+            len1 = 0
+            len2 = 0
+
+            # Decode the first half of the bit array (chunks 0 to 4)
+            for bit in bit_array[0:5]:
+                if bit == -1:
+                    continue  # Skip invalid chunks (where no valid dominant frequency was found )
+                
+                len1 += 1
+                firstHalfSum += bit
+
+            # Decode the second half of the bit array (chunks 5 to 9)
+            for bit in bit_array[5:10]:
+                if bit == -1:
+                    continue  # Skip invalid chunks (where no valid dominant frequency was found)
+                
+                len2 += 1
+                secondHalfSum += bit
+
+            # Calculate the total sum of bits and the total length of valid bits
+            sum = firstHalfSum + secondHalfSum
+            len_f = len1 + len2
+
+
+            if len_f == 0:
+                return '2'
+
+            # Determine the final bit value based on the sum of decoded bits:
+            # - If sum > len_f / 2: Most chunks have a dominant frequency nearer to f1, return '1'.
+            # - If sum < len_f / 2: Most chunks have a dominant frequency nearer to f0, return '0'.
+            if sum > len_f / 2:
+                return '1'
+            if sum < len_f / 2:
+                return '0'
+
+            # Special case: If sum equals len_f / 2, consider the second half as the tiebreaker.
+            # - If the second half sum is less than half its length, return '0'.
+            # - Otherwise, return '1'.
+            if secondHalfSum < len2 / 2:
+                return '0'
             else:
-                bit = 1  # Frequency nearer to f1 is dominant, representing bit '1'
-            
-            # Append the determined bit to the bit array
-            bit_array.append(bit)
+                return '1'
 
 
 
 
-        # Initialize sums for the first and second halves of the bit array
-        firstHalfSum = 0
-        secondHalfSum = 0
+def xor(a,b):
+    """
+    Performs a bitwise XOR operation between two binary strings.
 
-        # Initialize counters for the number of valid bits in each half
-        len1 = 0
-        len2 = 0
+    Parameters:
+        a (str): The first binary string.
+        b (str): The second binary string.
 
-        # Decode the first half of the bit array (chunks 0 to 4)
-        for bit in bit_array[0:5]:
-            if bit == -1:
-                continue  # Skip invalid chunks (where no valid dominant frequency was found )
-            
-            len1 += 1
-            firstHalfSum += bit
+    Returns:
+        str: The result of the XOR operation as a binary string.
+    """
 
-        # Decode the second half of the bit array (chunks 5 to 9)
-        for bit in bit_array[5:10]:
-            if bit == -1:
-                continue  # Skip invalid chunks (where no valid dominant frequency was found)
-            
-            len2 += 1
-            secondHalfSum += bit
-
-        # Calculate the total sum of bits and the total length of valid bits
-        sum = firstHalfSum + secondHalfSum
-        len_f = len1 + len2
-
-
-        if len_f == 0:
-            return '2'
-
-        # Determine the final bit value based on the sum of decoded bits:
-        # - If sum > len_f / 2: Most chunks have a dominant frequency nearer to f1, return '1'.
-        # - If sum < len_f / 2: Most chunks have a dominant frequency nearer to f0, return '0'.
-        if sum > len_f / 2:
-            return '1'
-        if sum < len_f / 2:
-            return '0'
-
-        # Special case: If sum equals len_f / 2, consider the second half as the tiebreaker.
-        # - If the second half sum is less than half its length, return '0'.
-        # - Otherwise, return '1'.
-        if secondHalfSum < len2 / 2:
-            return '0'
+    ans = ""
+    for i in range(len(a)):
+        if( a[i]  != b[i]):
+            ans += '1'
         else:
-            return '1'
+            ans += '0'
+    return ans
 
+def remainder(a, b):
+    """
+    Calculates the remainder of the binary division of 'a' by 'b', used in CRC.
 
+    Parameters:
+        a(str) : The binary dividend.
+        b(str) : The binary divisor (CRC polynomial).
+
+    Returns:
+        str: The remainder after the division.
+    """
+
+    w =  a[:len(b) - 1]
+    for i in range(len(a) - len(b)+1):
+        w += a[i + len(b) - 1]
+        
+        # Determine whether to XOR with '0' or 'b' based on the leading bit
+        if(w[0] == '0'):
+            y = ['0'] * len(b)
+            x = ''.join(y)
+        else:
+            x = b
+        
+        # Update the working string with the XOR result, removing the leading bit
+        w = xor(w,x)[1:]
+    
+    return w
 
 
 # Data Link Layer class extending the Physical Layer
@@ -257,157 +312,162 @@ class DLL(PhysicalLayer):
         """
         # Call the base class (PhysicalLayer) constructor
         PhysicalLayer.__init__(self,sample_rate,duration,f0,f1,amplitute)
-
         self.RTS_preamble = ['0','0']
         self.CTS_preamble = ['0','1']
         self.data_preamble = ['1','0']
         self.ACK_preamble = ['1','1']
-        self.id = ['1','0']
+        self.id = ['0','1']
         self.process_time = 0.5
-        self.DIFS = 0.25
-        self.SIFS= 0.125
+        self.DIFS = 0.75
+        self.SIFS= 0.5
         self.bit = '0'
-        self.check_time = 0.1
-
-
-    
-    
-    def send_RTS( self, reciver_id , data):
-        
-        RTS_sent = 0
-        time_req = np.ceil( (len(data) + 10)*self.duration + self.process_time )
-        RTS = self.RTS_preamble +self.id + reciver_id + NumToList(time_req)
-        
-        self.transmit(RTS)
-    
+        self.check_time = 0.25
+        self.b='2'
+        # Synchronization pattern to identify the start of a frame
+    def send_ack(self,reci_id):
+        ack=[]
+        ack+=['1','1']
+        ack+=self.id
+        ack+=reci_id
+        self.transmit(ack)
+        # return ack
     def send_CTS( self, reciver_id ,t):
         
-        RTS_sent = 0
+        # RTS_sent = 0
+        time.sleep(self.SIFS)
         time_req = t + self.process_time  - 10*self.duration
-        RTS = self.RTS_preamble +self.id + reciver_id + NumToList(time_req)
-        
-        self.transmit(RTS)
-            
-
-    def recive_CTS(self,reciver_id):
-
-        CTS_recived = 0
-        start_time = time.time()
-        buff = ['2','2']
-
-        while time.time()-start_time < self.check_time:
-            
- 
-            bit = self.read_signal()
-            buff = buff[1 : ] + [bit]
-
-            if ( buff == self.CTS_preamble):
-                sender = [self.read_signal() , self.read_signal()]
-                reciver = [self.read_signal() , self.read_signal()]
-                if( sender == reciver_id and reciver == self.id ):
-                    CTS_recived = 1
-                    break
-        return CTS_recived
-
-    
-    def CheckForAcg(self,reciver_id):
-
-        ack_got = 0
-
-        start_time = time.time()
-        buff = ['2','2']
-
-        while time.time()-start_time < self.check_time:
-            
-            
-            bit = self.read_signal()
-            buff = buff[1 : ] + [bit]
-
-            if ( buff == self.ACK_preamble):
-                sender = [self.read_signal() , self.read_signal()]
-                reciver = [self.read_signal() , self.read_signal()]
-                if( sender == reciver_id and reciver == self.id ):
-                    ack_got = 1
-        
-        return ack_got
-    
-    def carrierSense(self):
-        
+        CTS = self.CTS_preamble +self.id + reciver_id + NumToList(time_req)
+        print("CTS trans",CTS)
+        self.transmit(CTS)
+    def rec_rts(self):
+        last4bits=['2','2']
         while(True):
-                
-            
-            buff =  ['2','2']
-            wait_time = 0
-
-            start_time = time.time()
-            present_time = start_time
-
-            while( present_time-start_time < self.DIFS ):
-
-                bit = self.read_signal()
-                buff = buff[1 : ] + [bit]
-
-                if ( buff[0] != '2' and buff[1] != '2' ):
-                    
-                    if ( buff == self.RTS_preamble or buff == self.CTS_preamble):
-                        sender_id = [self.read_signal(),self.read_signal()]
-                        reciver_id = [self.read_signal(),self.read_signal()]
-                        wait_time = ListToNum([self.read_signal() ,self.read_signal(),self.read_signal(),self.read_signal()])
-                    break
-
-                present_time = time.time()
-            
-            
-            time.sleep(wait_time)
-
-            if( present_time-start_time >= self.DIFS):
+            bit =   self.read_signal()
+            last4bits = last4bits[1:]+[bit]
+            # print(last4bits)
+            if(last4bits == ['0','0']): # RTS
+                sender =[self.read_signal(),self.read_signal()]
+                reciver =[self.read_signal(),self.read_signal()]
+                time1=listtoNum([self.read_signal() for _ in range(4)])
+                print(sender,reciver,time1)
+                if(reciver == self.id):
+                    # print("sent CTS")
+                    self.send_CTS(sender,time1)
+                    return sender
+                else:
+                    time.sleep(time1)
+    def read_data(self,sender):
+        print("READING DATA")
+        last4bits=['2','2']
+        final = []
+        start_time=time.time()
+        for i in range(20):
+            bit =   self.read_signal()
+            last4bits = last4bits[1:]+[bit]
+            if(last4bits == ['1','0']):
+                final=[self.read_signal()]
+                length=listtoNum([self.read_signal() for _ in range(4)])
+                print("length of data",length)
+                for i in range(length):
+                    final.append(self.read_signal())
+                return final
+            elif(last4bits[0]!='2' and last4bits[1]!='2'):
                 break
+        return final
+            
+                
+                    
+    def recieve(self):
+        """
+        Receives data from the physical layer by detecting the synchronization pattern
+        and then reading and decoding the data bits.
+
+        Returns:
+            list of str: The received and corrected data bits.
+        """
+        while(True):
+            # print("dnk")
+            sender=self.rec_rts()
+            # print("dnk")
+            time.sleep(self.SIFS)
+            data=self.read_data(sender)
+            # print("dnk")
+            if(data==[]):
+                continue
+            if(data[0]!=self.b):
+                print(data[1: ])
+                self.b=data[0]
+            time.sleep(self.SIFS)
+            self.send_ack(sender)
+            time.sleep(self.SIFS)
+        
+
+    def finalData(self,data):
+        """
+        Prepares the final data to be transmitted by adding synchronization bits
+        and the length of the data.
+
+        Parameters:
+            data (list of str): The data bits to be transmitted.
+
+        Returns:
+            list of str: The final data bits ready for transmission.
+        """
+
+        # Encode the data with CRC
+        finalCodeWord = self.encode(data)
+
+        # Calculate the length of the encoded data
+        l = len(finalCodeWord)
+
+        # Start with the synchronization pattern
+        final_data = copy.deepcopy(self.syncBits)
+
+        # Append the length information (5 bits)
+        for i in range(5):
+            final_data.append(f'{l%2}')
+            l = int(l/2)
+        
+        # Append the Final CodeWord
+        final_data += finalCodeWord
+        return final_data
 
 
-
-    def send_data(self , data , reciver_id):
+    def send_data(self , data):
         """
         Sends the encoded data through the physical layer.
 
         Parameters:
             data (list of str): The data bits to be transmitted.
         """
-
-        actual_data = self.data_preamble + self.id + reciver_id + NumToList(len(data)) + [self.bit] + data
-
-
-
-        while(True):
-            
-            time.sleep(random.randint(1,5)*self.DIFS)
-            
-            self.carrierSense()
-            
-            RTS_sent_succesful = 0
-
-            while(not RTS_sent_succesful):
-                self.send_RTS(reciver_id,data)
-                time.sleep(self.SIFS)
-                RTS_sent_succesful = self.recive_CTS(reciver_id)
-            
-            self.transmit(actual_data)
-
-            time.sleep(self.SIFS)
-
-            if(self.CheckForAcg(reciver_id) == 1):
-                break
-        
-
-        if ( self.bit == '0'):
-            self.bit = '1'
-        else:
-            self.bit = '0'
-            
-
-
-
+        self.transmit(data)
+    
 
 dll_layer = DLL(sample_rate=44100,duration=0.25,f0=800,f1=1200,amplitute=1)
+# sender part
+# def flip(data ,index):
+#     if(data[index] == '0'):
+#         data[index] = '1'
+#     else:
+#         data[index] = '0'
 
-# message=list(input())
-dll_layer.send_data(['1','0','1','0'],['0','1'])
+
+# message = list(input())
+# finalData = dll_layer.finalData(message)
+
+# a_and_b = input().split(' ')
+# a = float(a_and_b[0])
+# b = float(a_and_b[1])
+
+# pre_len = len(dll_layer.syncBits)+5
+
+# error_index1 = pre_len+math.ceil((len(message)+dll_layer.crc_degree)*a)-1
+# error_index2 = pre_len+math.ceil((len(message)+dll_layer.crc_degree)*b)-1
+
+# flip(finalData,error_index1)
+# if b != 0
+#     flip(finalData,error_index2)
+
+# print(finalData)
+# dll_layer.send_data(finalData)
+dll_layer.recieve()
