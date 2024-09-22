@@ -28,6 +28,7 @@ def ListToNum(l):
     return num
 
 
+
 # Base class representing the Physical Layer in a communication system
 class PhysicalLayer:
 
@@ -152,6 +153,7 @@ class PhysicalLayer:
 
         # Iterate through the signal in chunks to analyze its frequency content
         for i in range(0, int(self.duration * self.sample_rate), int(chunk_size)):
+
             
             # Extract a chunk of the signal for analysis
             signal_chunk = signal[i: i + chunk_size]
@@ -161,6 +163,9 @@ class PhysicalLayer:
 
             # Get the corresponding frequency values for the FFT components
             frequencies = np.fft.fftfreq(len(signal_chunk), d=1/self.sample_rate)
+
+
+        
 
             # Define the frequency ranges of interest around f0 and f1
             range_f0 = (self.f0 - 100, self.f0 + 100)
@@ -173,9 +178,19 @@ class PhysicalLayer:
             indices_f1 = np.where((frequencies >= range_f1[0]) & (frequencies <= range_f1[1]))[0]
 
             # If no relevant frequencies are found, append -1 to indicate no valid detection
-            if len(indices_f0) + len(indices_f1) == 0:
+            
+            max_f0 = np.max(np.abs(fft_values[indices_f0])) if indices_f0.size > 0 else float('-inf')
+            max_f1 = np.max(np.abs(fft_values[indices_f1])) if indices_f1.size > 0 else float('-inf')
+
+
+            # if ( max(max_f0,max_f1) > 100):
+            #     print(max_f0,max_f1)
+
+                # Compare both max values
+            if max(max_f0, max_f1) < 100:
                 bit_array.append(-1)
                 continue
+
 
             # Determine the final bit by comparing which range has a stronger signal
             if np.max(np.abs(fft_values[indices_f0])) >= np.max(np.abs(fft_values[indices_f1])):
@@ -217,8 +232,7 @@ class PhysicalLayer:
         sum = firstHalfSum + secondHalfSum
         len_f = len1 + len2
 
-
-        if len_f == 0:
+        if len_f < 5:
             return '2'
 
         # Determine the final bit value based on the sum of decoded bits:
@@ -264,10 +278,10 @@ class DLL(PhysicalLayer):
         self.ACK_preamble = ['1','1']
         self.id = ['1','0']
         self.process_time = 0.5
-        self.DIFS = 0.25
-        self.SIFS= 0.125
+        self.DIFS = 3
+        self.SIFS= 2
         self.bit = '0'
-        self.check_time = 0.25
+        self.check_time = 0.1
 
 
     
@@ -279,34 +293,31 @@ class DLL(PhysicalLayer):
         RTS = self.RTS_preamble +self.id + reciver_id + NumToList(time_req)
         
         self.transmit(RTS)
-    
-    def send_CTS( self, reciver_id ,t):
-        
-        RTS_sent = 0
-        time_req = t + self.process_time  - 10*self.duration
-        RTS = self.RTS_preamble +self.id + reciver_id + NumToList(time_req)
-        
-        self.transmit(RTS)
             
 
     def recive_CTS(self,reciver_id):
 
         CTS_recived = 0
-        start_time = time.time()
+        
         buff = ['2','2']
 
-        while time.time()-start_time < self.check_time:
+        for i in range(20):
             
- 
             bit = self.read_signal()
             buff = buff[1 : ] + [bit]
 
             if ( buff == self.CTS_preamble):
+
                 sender = [self.read_signal() , self.read_signal()]
                 reciver = [self.read_signal() , self.read_signal()]
+                wait_time = ListToNum([self.read_signal() ,self.read_signal(),self.read_signal(),self.read_signal()])
+
+                
                 if( sender == reciver_id and reciver == self.id ):
+                    print(sender,reciver)
                     CTS_recived = 1
                     break
+        
         return CTS_recived
 
     
@@ -317,8 +328,7 @@ class DLL(PhysicalLayer):
         start_time = time.time()
         buff = ['2','2']
 
-        while time.time()-start_time < self.check_time:
-            
+        for i in range(20):
             
             bit = self.read_signal()
             buff = buff[1 : ] + [bit]
@@ -326,8 +336,10 @@ class DLL(PhysicalLayer):
             if ( buff == self.ACK_preamble):
                 sender = [self.read_signal() , self.read_signal()]
                 reciver = [self.read_signal() , self.read_signal()]
+                
                 if( sender == reciver_id and reciver == self.id ):
                     ack_got = 1
+                    break
         
         return ack_got
     
@@ -339,10 +351,9 @@ class DLL(PhysicalLayer):
             buff =  ['2','2']
             wait_time = 0
 
-            start_time = time.time()
-            present_time = start_time
-
-            while( present_time-start_time < self.DIFS ):
+            x = 0
+            
+            for _ in range(self.DIFS):
 
                 bit = self.read_signal()
                 buff = buff[1 : ] + [bit]
@@ -355,12 +366,12 @@ class DLL(PhysicalLayer):
                         wait_time = ListToNum([self.read_signal() ,self.read_signal(),self.read_signal(),self.read_signal()])
                     break
 
-                present_time = time.time()
+                x+=1 
             
             
             time.sleep(wait_time)
 
-            if( present_time-start_time >= self.DIFS):
+            if( x >= self.DIFS):
                 break
 
 
@@ -373,31 +384,38 @@ class DLL(PhysicalLayer):
             data (list of str): The data bits to be transmitted.
         """
 
-        actual_data = self.data_preamble + self.id + reciver_id + NumToList(len(data)) + [self.bit] + data
-
-
+        actual_data = self.data_preamble + [self.bit] +  NumToList(len(data))+ data
 
         while(True):
             
-            time.sleep(random.randint(1,5)*self.DIFS)
+            time.sleep(random.randint(1,3)*self.DIFS*self.duration)
             
             self.carrierSense()
-            
+
+            print("carrier sensed")
+
             RTS_sent_succesful = 0
 
             while(not RTS_sent_succesful):
                 self.send_RTS(reciver_id,data)
-                time.sleep(self.SIFS)
+                print("RTS sent ")
+                time.sleep(self.SIFS*self.duration)
+                
                 RTS_sent_succesful = self.recive_CTS(reciver_id)
+                
+                time.sleep(self.SIFS*self.duration)
             
+            print("CTS recived")
+
             self.transmit(actual_data)
 
-            time.sleep(self.SIFS)
+            print("data")
+
+            time.sleep(self.SIFS*self.duration)
 
             if(self.CheckForAcg(reciver_id) == 1):
                 break
-        
-
+            
         if ( self.bit == '0'):
             self.bit = '1'
         else:
@@ -408,29 +426,9 @@ class DLL(PhysicalLayer):
 
 
 dll_layer = DLL(sample_rate=44100,duration=0.25,f0=800,f1=1200,amplitute=1)
-# sender part
-def flip(data ,index):
-    if(data[index] == '0'):
-        data[index] = '1'
-    else:
-        data[index] = '0'
 
-
-message = list(input())
-finalData = dll_layer.finalData(message)
-
-a_and_b = input().split(' ')
-a = float(a_and_b[0])
-b = float(a_and_b[1])
-
-pre_len = len(dll_layer.syncBits)+5
-
-error_index1 = pre_len+math.ceil((len(message)+dll_layer.crc_degree)*a)-1
-error_index2 = pre_len+math.ceil((len(message)+dll_layer.crc_degree)*b)-1
-
-flip(finalData,error_index1)
-if b != 0:
-    flip(finalData,error_index2)
-
-print(finalData)
-dll_layer.send_data(finalData)
+# message=list(input())
+# start = time.time()
+# while(time.time() - start < 5 ):
+#     print(dll_layer.read_signal())
+dll_layer.send_data(['1','0','1','0','1','0'],['0','1'])
