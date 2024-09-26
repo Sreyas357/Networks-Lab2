@@ -10,18 +10,24 @@ ALSA lib pcm_usb_stream.c:482:(_snd_pcm_usb_stream_open) Invalid card 'card'
 ALSA lib confmisc.c:160:(snd_config_get_card) Invalid field card
 ALSA lib pcm_usb_stream.c:482:(_snd_pcm_usb_stream_open) Invalid card 'card'
 ALSA lib pcm_dmix.c:1032:(snd_pcm_dmix_open) unable to open slave
-ALSA lib pcm.c:8568:(snd_pcm_recover) underrun occurred
-ALSA lib pcm.c:8568:(snd_pcm_recover) underrun occurred
-ALSA lib pcm.c:8568:(snd_pcm_recover) underrun occurred
-ALSA lib pcm.c:8568:(snd_pcm_recover) underrun occurred
+Traceback (most recent call last):
+  File "/home/sreyas/Documents/computer_networks/Networks-Lab2/main.py", line 436, in <module>
+    dll_layer.send_data(['1','0','1','0','1','0'],['1','0'])
+  File "/home/sreyas/Documents/computer_networks/Networks-Lab2/main.py", line 393, in senALSA lib pcm.c:8568:(snd_pcm_recover) underrun occurred
 ALSA lib pcm.c:8568:(snd_pcm_recover) underrun occurred
 ALSA lib pcm.c:8568:(snd_pcm_recover) underrun occurred
 ALSA lib pcm.c:8568:(snd_pcm_recover) underrun occurred
 ALSA lib pcm.c:8568:(snd_pcm_recover) underrun occurred
 ALSA lib pcm.c:8568:(snd_pcm_recover) underrun occurred
 Traceback (most recent call last):
-  File "/home/sreyas/Documents/computer_networks/Networks-Lab2/main.py", line 434, in <module>
-    dll_layer.send_data(['1','0','1','0','1','0'],['0','1'])
-  File "/home/sreyas/Documents/computer_networks/Networks-Lab2/main.py", line 402, in send_data
-    time.sleep(self.SIFS*self.duration)
+  File "/home/sreyas/Documents/computer_networks/Networks-Lab2/reciver.py", line 416, in <module>
+    dll_layer.recieve()
+  File "/home/sreyas/Documents/computer_networks/Networks-Lab2/reciver.py", line 363, in recieve
+    self.send_ack(sender)
+  File "/home/sreyas/Documents/computer_networks/Networks-Lab2/reciver.py", line 279, in send_ack
+    self.transmit(ack)
+  File "/home/sreyas/Documents/computer_networks/Networks-Lab2/reciver.py", line 107, in transmit
+    self.stream.write(signal.astype(np.float32).tobytes())
+  File "/home/sreyas/.local/lib/python3.10/site-packages/pyaudio/__init__.py", line 550, in write
+    pa.write_stream(self._stream, frames, num_frames,
 KeyboardInterrupt

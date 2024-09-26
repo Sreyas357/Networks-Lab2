@@ -267,7 +267,7 @@ class DLL(PhysicalLayer):
         self.CTS_preamble = ['0','1','0','1']
         self.data_preamble = ['1','0','1','1']
         self.ACK_preamble = ['1','1','0','1']
-        self.id = ['1','0']
+        self.id = ['0','1']
         self.process_time = self.duration
         self.DIFS = 3
         self.SIFS= 2
@@ -338,29 +338,36 @@ class DLL(PhysicalLayer):
         while(True):
                 
             
-            buff =  self.buffer
-            wait_time = 0
-
+            # buff =  self.buffer
+        
             x = 0
             
+            wait_time = 0
+
             for _ in range(self.DIFS):
 
                 bit = self.read_signal()
-                buff = buff[1 : ] + [bit]
+
+                if ( bit == '1'):
+                    break
+
+                # buff = buff[1 : ] + [bit]
 
                     
-                if ( buff == self.RTS_preamble or buff == self.CTS_preamble ):
-                    sender_id = [self.read_signal(),self.read_signal()]
-                    reciver_id = [self.read_signal(),self.read_signal()]
+                # if ( buff == self.RTS_preamble or buff == self.CTS_preamble ):
+                #     sender_id = [self.read_signal(),self.read_signal()]
+                #     reciver_id = [self.read_signal(),self.read_signal()]
                     
-                    wait_time = ListToNum([self.read_signal() ,self.read_signal(),self.read_signal(),self.read_signal()])
+                #     wait_time = ListToNum([self.read_signal() ,self.read_signal(),self.read_signal(),self.read_signal()])
 
-                    break
-                if (  buff == self.data_preamble or buff == self.ACK_preamble):
-                    sender_id = [self.read_signal(),self.read_signal()]
-                    reciver_id = [self.read_signal(),self.read_signal()]
+                #     break
+                # if (  buff == self.data_preamble or buff == self.ACK_preamble):
+                #     sender_id = [self.read_signal(),self.read_signal()]
+                #     reciver_id = [self.read_signal(),self.read_signal()]
 
-                    break
+                #     break
+                # if ( buff != self.buffer):
+                #     break
 
                 x+=1 
                 
@@ -383,22 +390,22 @@ class DLL(PhysicalLayer):
 
         while(True):
             
-            time.sleep(random.randint(1,3)*self.DIFS*self.duration)
+            time.sleep(random.randint(150,153)*self.DIFS*self.duration)
             
             self.carrierSense()
 
             print("carrier sensed")
 
-            RTS_sent_succesful = 0
+        
+            self.send_RTS(reciver_id,data)
+            print("RTS sent ")
+            time.sleep(self.SIFS*self.duration)
+            
+            RTS_sent_succesful = self.recive_CTS(reciver_id)
+            time.sleep(self.SIFS*self.duration)
 
-            while(not RTS_sent_succesful):
-                self.send_RTS(reciver_id,data)
-                print("RTS sent ")
-                time.sleep(self.SIFS*self.duration)
-                
-                RTS_sent_succesful = self.recive_CTS(reciver_id)
-                
-                time.sleep(self.SIFS*self.duration)
+            if ( not RTS_sent_succesful):
+                continue
             
             print("CTS recived")
 
@@ -426,4 +433,4 @@ dll_layer = DLL(sample_rate=44100,duration=0.25,f0=800,f1=1200,amplitute=1)
 # start = time.time()
 # while(time.time() - start < 5 ):
 #     print(dll_layer.read_signal())
-dll_layer.send_data(['1','0','1','0','1','0'],['0','1'])
+dll_layer.send_data(['1','0','1','0','1','0'],['1','0'])
