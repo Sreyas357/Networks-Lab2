@@ -14,7 +14,10 @@ def NumToList(t):
                 final_list.append('1')
             else:
                 final_list.append('0')
-            t /= 2
+            t = np.floor(t/2)
+            
+            
+        print(final_list)
         
         return final_list
     
@@ -103,6 +106,7 @@ class PhysicalLayer:
         """
         
         # Iterate over each bit and generate its corresponding signal
+        print(bits)
         for bit in bits:
             signal = self.generate_signal(bit)
 
@@ -164,9 +168,6 @@ class PhysicalLayer:
             # Get the corresponding frequency values for the FFT components
             frequencies = np.fft.fftfreq(len(signal_chunk), d=1/self.sample_rate)
 
-
-        
-
             # Define the frequency ranges of interest around f0 and f1
             range_f0 = (self.f0 - 100, self.f0 + 100)
             range_f1 = (self.f1 - 100, self.f1 + 100)
@@ -177,23 +178,16 @@ class PhysicalLayer:
             # Filter out the FFT values that fall within the range of f1
             indices_f1 = np.where((frequencies >= range_f1[0]) & (frequencies <= range_f1[1]))[0]
 
-            # If no relevant frequencies are found, append -1 to indicate no valid detection
-            
-            max_f0 = np.max(np.abs(fft_values[indices_f0])) if indices_f0.size > 0 else float('-inf')
-            max_f1 = np.max(np.abs(fft_values[indices_f1])) if indices_f1.size > 0 else float('-inf')
+            # If no relevant frequencies are found, append -1 to indicate no valid detectio
 
+            if len(indices_f0)+len(indices_f1)==0:
+                bit = -1
 
-            # if ( max(max_f0,max_f1) > 100):
-            #     print(max_f0,max_f1)
-
-                # Compare both max values
-            if max(max_f0, max_f1) < 100:
-                bit_array.append(-1)
-                continue
-
-
-            # Determine the final bit by comparing which range has a stronger signal
-            if np.max(np.abs(fft_values[indices_f0])) >= np.max(np.abs(fft_values[indices_f1])):
+            elif len(indices_f0) == 0 :
+                bit = 1
+            elif len(indices_f1) == 0:
+                bit = 0
+            elif np.max(np.abs(fft_values[indices_f0])) >= np.max(np.abs(fft_values[indices_f1])):
                 bit = 0  # Frequency nearer to f0 is dominant, representing bit '0'
             else:
                 bit = 1  # Frequency nearer to f1 is dominant, representing bit '1'
@@ -232,9 +226,6 @@ class PhysicalLayer:
         sum = firstHalfSum + secondHalfSum
         len_f = len1 + len2
 
-        if len_f < 5:
-            return '2'
-
         # Determine the final bit value based on the sum of decoded bits:
         # - If sum > len_f / 2: Most chunks have a dominant frequency nearer to f1, return '1'.
         # - If sum < len_f / 2: Most chunks have a dominant frequency nearer to f0, return '0'.
@@ -272,25 +263,27 @@ class DLL(PhysicalLayer):
         # Call the base class (PhysicalLayer) constructor
         PhysicalLayer.__init__(self,sample_rate,duration,f0,f1,amplitute)
 
-        self.RTS_preamble = ['0','0']
-        self.CTS_preamble = ['0','1']
-        self.data_preamble = ['1','0']
-        self.ACK_preamble = ['1','1']
+        self.RTS_preamble = ['1','0','1','0']
+        self.CTS_preamble = ['0','1','0','1']
+        self.data_preamble = ['1','0','1','1']
+        self.ACK_preamble = ['1','1','0','1']
         self.id = ['1','0']
-        self.process_time = 0.5
+        self.process_time = self.duration
         self.DIFS = 3
         self.SIFS= 2
         self.bit = '0'
         self.check_time = 0.1
+        self.buffer = ['0','0','0','0']
 
 
     
     
     def send_RTS( self, reciver_id , data):
         
-        RTS_sent = 0
         time_req = np.ceil( (len(data) + 10)*self.duration + self.process_time )
         RTS = self.RTS_preamble +self.id + reciver_id + NumToList(time_req)
+
+        #print("RTS sent = ",RTS)
         
         self.transmit(RTS)
             
@@ -299,7 +292,7 @@ class DLL(PhysicalLayer):
 
         CTS_recived = 0
         
-        buff = ['2','2']
+        buff = self.buffer
 
         for i in range(20):
             
@@ -312,9 +305,7 @@ class DLL(PhysicalLayer):
                 reciver = [self.read_signal() , self.read_signal()]
                 wait_time = ListToNum([self.read_signal() ,self.read_signal(),self.read_signal(),self.read_signal()])
 
-                
                 if( sender == reciver_id and reciver == self.id ):
-                    print(sender,reciver)
                     CTS_recived = 1
                     break
         
@@ -325,8 +316,7 @@ class DLL(PhysicalLayer):
 
         ack_got = 0
 
-        start_time = time.time()
-        buff = ['2','2']
+        buff = self.buffer
 
         for i in range(20):
             
@@ -348,7 +338,7 @@ class DLL(PhysicalLayer):
         while(True):
                 
             
-            buff =  ['2','2']
+            buff =  self.buffer
             wait_time = 0
 
             x = 0
@@ -358,22 +348,27 @@ class DLL(PhysicalLayer):
                 bit = self.read_signal()
                 buff = buff[1 : ] + [bit]
 
-                if ( buff[0] != '2' and buff[1] != '2' ):
                     
-                    if ( buff == self.RTS_preamble or buff == self.CTS_preamble):
-                        sender_id = [self.read_signal(),self.read_signal()]
-                        reciver_id = [self.read_signal(),self.read_signal()]
-                        wait_time = ListToNum([self.read_signal() ,self.read_signal(),self.read_signal(),self.read_signal()])
+                if ( buff == self.RTS_preamble or buff == self.CTS_preamble ):
+                    sender_id = [self.read_signal(),self.read_signal()]
+                    reciver_id = [self.read_signal(),self.read_signal()]
+                    
+                    wait_time = ListToNum([self.read_signal() ,self.read_signal(),self.read_signal(),self.read_signal()])
+
+                    break
+                if (  buff == self.data_preamble or buff == self.ACK_preamble):
+                    sender_id = [self.read_signal(),self.read_signal()]
+                    reciver_id = [self.read_signal(),self.read_signal()]
+
                     break
 
                 x+=1 
-            
+                
             
             time.sleep(wait_time)
 
             if( x >= self.DIFS):
                 break
-
 
 
     def send_data(self , data , reciver_id):
@@ -409,7 +404,7 @@ class DLL(PhysicalLayer):
 
             self.transmit(actual_data)
 
-            print("data")
+            print("data transmitted = ",actual_data)
 
             time.sleep(self.SIFS*self.duration)
 
