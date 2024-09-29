@@ -4,6 +4,7 @@ import copy
 import random
 import math
 import time
+from scipy.signal import butter, lfilter
 
 
 def NumToList(t):
@@ -31,8 +32,6 @@ def ListToNum(l):
     return num
 
 
-
-# Base class representing the Physical Layer in a communication system
 class PhysicalLayer:
 
     # Constructor to intialize parameters for signal creation
@@ -60,10 +59,10 @@ class PhysicalLayer:
 
         #Openig an audio stream for both output(transmission) and input(reception)
         self.stream = self.port.open(format=pyaudio.paFloat32,
-                                    channels=1,
-                                    rate=self.sample_rate,
-                                    output=True,
-                                    input=True
+                                        channels=1,
+                                        rate=self.sample_rate,
+                                        output=True,
+                                        input=True
                                     )
     
     def __del__(self):
@@ -106,12 +105,59 @@ class PhysicalLayer:
         """
         
         # Iterate over each bit and generate its corresponding signal
-        print(bits)
         for bit in bits:
             signal = self.generate_signal(bit)
 
             # Write the generated signal to the audio output stream
             self.stream.write(signal.astype(np.float32).tobytes())
+        #print("transmit",bits)
+
+    def is_noise(self, signal):
+        energy = np.sum(signal ** 2) / len(signal)  # Average energy
+
+        #print("energy = ",energy)
+        
+        noise_threshold = 0.25  # Adjust this threshold based on testing
+        return energy < noise_threshold
+    def is_noise_frequency(self, signal):
+        fft_values = np.fft.fft(signal)
+        power = np.abs(fft_values) ** 2  # Power of each frequency bin
+        average_power = np.mean(power)
+        noise_power_threshold = 2000  # Adjust based on characteristics of your environment
+
+        #print("averege power = ",average_power)
+
+        return average_power < noise_power_threshold
+    def is_noise_variability(self, signal):
+        std_dev = np.std(signal)
+        variability_threshold = 0.5  # Adjust based on testing
+        #print("std_dev = ",std_dev)
+        return std_dev < variability_threshold
+    
+    def is_noise_autocorrelation(self, signal):
+        autocorr = np.correlate(signal, signal, mode='full')
+        autocorr = autocorr[len(autocorr)//2:]  # Keep only one side
+        significant_peak_threshold = 1000  # Adjust as necessary
+        #print("corr = ",np.max(autocorr))
+        return np.max(autocorr) < significant_peak_threshold
+
+    def butter_bandpass(self,lowcut, highcut, fs, order=5):
+        nyq = 0.5 * fs
+        low = lowcut / nyq
+        high = highcut / nyq
+        b, a = butter(order, [low, high], btype='band')
+        return b, a
+
+    def bandpass_filter(self,data, lowcut, highcut, fs, order=5):
+        b, a = self.butter_bandpass(lowcut, highcut, fs, order=order)
+        y = lfilter(b, a, data)
+        return y
+
+    def is_noise_filtered(self, signal):
+        filtered_signal = self.bandpass_filter(signal, self.f0 - 200, self.f1 + 200, self.sample_rate)
+        #print("band_pass = ", np.mean(np.abs(filtered_signal)))
+        return np.mean(np.abs(filtered_signal)) < 0.25 # Threshold for filtered signal
+        
 
 
     def read_signal(self):
@@ -131,116 +177,129 @@ class PhysicalLayer:
         # Convert the raw byte data to a NumPy array of floats
         signal = np.frombuffer(rawData,dtype = np.float32)
 
-        # Decode the signal to determine whether it represents a '0' or '1'
-        bit = self.decode_signal(signal)
+
+        check1 = self.is_noise(signal)
+        check2 = self.is_noise_frequency(signal)
+        check3 = self.is_noise_variability(signal)
+        check4 = self.is_noise_autocorrelation(signal)
+        check5 = self.is_noise_filtered(signal)
+
+
+        if (check1 or check2 or check3 or check4 or check5 ):
+            #print("Detected noise, no valid signal present.")
+            bit = '2'  
+        else:
+            # Proceed with decoding the signal
+            bit=  self.decode_signal(signal)
+
+        print(bit)
 
         return bit
+    
+    
 
 
     def decode_signal(self, signal):
 
-        """
-        Decodes a received audio signal into a corresponding bit.
+            """
+            Decodes a received audio signal into a corresponding bit.
 
-        Parameters:
-            signal (np.ndarray): The received audio signal as a NumPy array.
+            Parameters:
+                signal (np.ndarray): The received audio signal as a NumPy array.
 
-        Returns:
-            str: The decoded bit ('0' or '1').
-        """
-        # Initialize an array to store the dominant bits determined from signal chunks
-        bit_array = []
-        num_chunks = 10  # Number of chunks to divide the signal into
+            Returns:
+                str: The decoded bit ('0' or '1').
+            """
+            # Initialize an array to store the dominant bits determined from signal chunks
+            bit_array = []
+            num_chunks = 10  # Number of chunks to divide the signal into
 
-        # Determine the size of each chunk
-        chunk_size = int(len(signal) / num_chunks)
+            # Determine the size of each chunk
+            chunk_size = int(len(signal) / num_chunks)
 
-        # Iterate through the signal in chunks to analyze its frequency content
-        for i in range(0, int(self.duration * self.sample_rate), int(chunk_size)):
 
+            # Iterate through the signal in chunks to analyze its frequency content
+            for i in range(num_chunks):
+                
+                # Extract a chunk of the signal for analysis
+                signal_chunk = signal[i*chunk_size: i*chunk_size + chunk_size]
+
+                # Compute the Fast Fourier Transform (FFT) of the chunk to get frequency components
+                fft_values = np.fft.fft(signal_chunk)
+
+                # Get the corresponding frequency values for the FFT components
+                frequencies = np.fft.fftfreq(len(signal_chunk), d=1/self.sample_rate)
+
+                # Define the frequency ranges of interest around f0 and f1
+                range_f0 = (self.f0 - 100, self.f0 + 100)
+                range_f1 = (self.f1 - 100, self.f1 + 100)
+
+
+                # Filter out the FFT values that fall within the range of f0
+
+                indices_f0 = np.where((frequencies >= range_f0[0]) & (frequencies <= range_f0[1]))[0]
             
-            # Extract a chunk of the signal for analysis
-            signal_chunk = signal[i: i + chunk_size]
+                # Filter out the FFT values that fall within the range of f1
+                
+                indices_f1 = np.where((frequencies >= range_f1[0]) & (frequencies <= range_f1[1]))[0]
 
-            # Compute the Fast Fourier Transform (FFT) of the chunk to get frequency components
-            fft_values = np.fft.fft(signal_chunk)
 
-            # Get the corresponding frequency values for the FFT components
-            frequencies = np.fft.fftfreq(len(signal_chunk), d=1/self.sample_rate)
+                if np.max(np.abs(fft_values[indices_f0])) >= np.max(np.abs(fft_values[indices_f1])):
+                    bit = 0  # Frequency nearer to f0 is dominant, representing bit '0'
+                else:
+                    bit = 1  # Frequency nearer to f1 is dominant, representing bit '1'
 
-            # Define the frequency ranges of interest around f0 and f1
-            range_f0 = (self.f0 - 100, self.f0 + 100)
-            range_f1 = (self.f1 - 100, self.f1 + 100)
-
-            # Filter out the FFT values that fall within the range of f0
-            indices_f0 = np.where((frequencies >= range_f0[0]) & (frequencies <= range_f0[1]))[0]
+                
+                # Append the determined bit to the bit array
+                bit_array.append(bit)
             
-            # Filter out the FFT values that fall within the range of f1
-            indices_f1 = np.where((frequencies >= range_f1[0]) & (frequencies <= range_f1[1]))[0]
+            
+            # Initialize sums for the first and second halves of the bit array
+            firstHalfSum = 0
+            secondHalfSum = 0
 
-            # If no relevant frequencies are found, append -1 to indicate no valid detectio
+            # Initialize counters for the number of valid bits in each half
+            len1 = 0
+            len2 = 0
 
-            if len(indices_f0)+len(indices_f1)==0:
-                bit = -1
+            # Decode the first half of the bit array (chunks 0 to 4)
+            for bit in bit_array[0:5]:
+                # if bit == -1:
+                #     continue  # Skip invalid chunks (where no valid dominant frequency was found )
+                
+                len1 += 1
+                firstHalfSum += bit
 
-            elif len(indices_f0) == 0 :
-                bit = 1
-            elif len(indices_f1) == 0:
-                bit = 0
-            elif np.max(np.abs(fft_values[indices_f0])) >= np.max(np.abs(fft_values[indices_f1])):
-                bit = 0  # Frequency nearer to f0 is dominant, representing bit '0'
+            # Decode the second half of the bit array (chunks 5 to 9)
+            for bit in bit_array[5:10]:
+                # if bit == -1:
+                #     continue  # Skip invalid chunks (where no valid dominant frequency was found)
+                
+                len2 += 1
+                secondHalfSum += bit
+
+            # Calculate the total sum of bits and the total length of valid bits
+            sum = firstHalfSum + secondHalfSum
+            len_f = len1 + len2
+
+
+            # Determine the final bit value based on the sum of decoded bits:
+            # - If sum > len_f / 2: Most chunks have a dominant frequency nearer to f1, return '1'.
+            # - If sum < len_f / 2: Most chunks have a dominant frequency nearer to f0, return '0'.
+            if sum > len_f / 2:
+                return '1'
+            if sum < len_f / 2:
+                return '0'
+
+            # Special case: If sum equals len_f / 2, consider the second half as the tiebreaker.
+            # - If the second half sum is less than half its length, return '0'.
+            # - Otherwise, return '1'.
+            if secondHalfSum < len2 / 2:
+                return '0'
             else:
-                bit = 1  # Frequency nearer to f1 is dominant, representing bit '1'
-            
-            # Append the determined bit to the bit array
-            bit_array.append(bit)
+                return '1'
 
 
-
-
-        # Initialize sums for the first and second halves of the bit array
-        firstHalfSum = 0
-        secondHalfSum = 0
-
-        # Initialize counters for the number of valid bits in each half
-        len1 = 0
-        len2 = 0
-
-        # Decode the first half of the bit array (chunks 0 to 4)
-        for bit in bit_array[0:5]:
-            if bit == -1:
-                continue  # Skip invalid chunks (where no valid dominant frequency was found )
-            
-            len1 += 1
-            firstHalfSum += bit
-
-        # Decode the second half of the bit array (chunks 5 to 9)
-        for bit in bit_array[5:10]:
-            if bit == -1:
-                continue  # Skip invalid chunks (where no valid dominant frequency was found)
-            
-            len2 += 1
-            secondHalfSum += bit
-
-        # Calculate the total sum of bits and the total length of valid bits
-        sum = firstHalfSum + secondHalfSum
-        len_f = len1 + len2
-
-        # Determine the final bit value based on the sum of decoded bits:
-        # - If sum > len_f / 2: Most chunks have a dominant frequency nearer to f1, return '1'.
-        # - If sum < len_f / 2: Most chunks have a dominant frequency nearer to f0, return '0'.
-        if sum > len_f / 2:
-            return '1'
-        if sum < len_f / 2:
-            return '0'
-
-        # Special case: If sum equals len_f / 2, consider the second half as the tiebreaker.
-        # - If the second half sum is less than half its length, return '0'.
-        # - Otherwise, return '1'.
-        if secondHalfSum < len2 / 2:
-            return '0'
-        else:
-            return '1'
 
 
 
@@ -267,7 +326,7 @@ class DLL(PhysicalLayer):
         self.CTS_preamble = ['0','1','0','1']
         self.data_preamble = ['1','0','1','1']
         self.ACK_preamble = ['1','1','0','1']
-        self.id = ['0','1']
+        self.id = ['1','1']
         self.process_time = self.duration
         self.DIFS = 3
         self.SIFS= 2
@@ -339,22 +398,19 @@ class DLL(PhysicalLayer):
                 
             
             # buff =  self.buffer
-        
-            x = 0
-            
             wait_time = 0
 
-            for _ in range(self.DIFS):
-
+            x = 0
+            
+            for i in range(self.DIFS):
                 bit = self.read_signal()
-
-                if ( bit == '1'):
+                # print(bit,i)
+                if(bit=='1'):
                     break
-
                 # buff = buff[1 : ] + [bit]
 
                     
-                # if ( buff == self.RTS_preamble or buff == self.CTS_preamble ):
+                # if ( buff == self.RTS_preamble or buff == self.CTS_preamble):
                 #     sender_id = [self.read_signal(),self.read_signal()]
                 #     reciver_id = [self.read_signal(),self.read_signal()]
                     
@@ -366,9 +422,7 @@ class DLL(PhysicalLayer):
                 #     reciver_id = [self.read_signal(),self.read_signal()]
 
                 #     break
-                # if ( buff != self.buffer):
-                #     break
-
+                # if( buff !=self.)
                 x+=1 
                 
             
@@ -387,26 +441,27 @@ class DLL(PhysicalLayer):
         """
 
         actual_data = self.data_preamble + [self.bit] +  NumToList(len(data))+ data
-
+        t=1
         while(True):
+
+            if(t!=1):
+                time.sleep(random.randint(1,10)*self.DIFS*self.duration)
             
-            time.sleep(random.randint(150,153)*self.DIFS*self.duration)
-            
+            print("hf")
             self.carrierSense()
 
             print("carrier sensed")
 
-        
             self.send_RTS(reciver_id,data)
             print("RTS sent ")
             time.sleep(self.SIFS*self.duration)
             
             RTS_sent_succesful = self.recive_CTS(reciver_id)
-            time.sleep(self.SIFS*self.duration)
-
-            if ( not RTS_sent_succesful):
-                continue
             
+            time.sleep(self.SIFS*self.duration)
+            
+            if(not RTS_sent_succesful):
+                continue
             print("CTS recived")
 
             self.transmit(actual_data)
@@ -417,6 +472,7 @@ class DLL(PhysicalLayer):
 
             if(self.CheckForAcg(reciver_id) == 1):
                 break
+            t=t+1
             
         if ( self.bit == '0'):
             self.bit = '1'
@@ -433,4 +489,4 @@ dll_layer = DLL(sample_rate=44100,duration=0.25,f0=800,f1=1200,amplitute=1)
 # start = time.time()
 # while(time.time() - start < 5 ):
 #     print(dll_layer.read_signal())
-dll_layer.send_data(['1','0','1','0','1','0'],['1','0'])
+dll_layer.send_data(['1','0','1','0','1','0'],['0','1'])
