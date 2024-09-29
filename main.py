@@ -16,9 +16,6 @@ def NumToList(t):
             else:
                 final_list.append('0')
             t = np.floor(t/2)
-            
-            
-        print(final_list)
         
         return final_list
     
@@ -177,20 +174,7 @@ class PhysicalLayer:
         # Convert the raw byte data to a NumPy array of floats
         signal = np.frombuffer(rawData,dtype = np.float32)
 
-
-        check1 = self.is_noise(signal)
-        check2 = self.is_noise_frequency(signal)
-        check3 = self.is_noise_variability(signal)
-        check4 = self.is_noise_autocorrelation(signal)
-        check5 = self.is_noise_filtered(signal)
-
-
-        if (check1 or check2 or check3 or check4 or check5 ):
-            #print("Detected noise, no valid signal present.")
-            bit = '2'  
-        else:
-            # Proceed with decoding the signal
-            bit=  self.decode_signal(signal)
+        bit=  self.decode_signal(signal)
 
         print(bit)
 
@@ -322,27 +306,26 @@ class DLL(PhysicalLayer):
         # Call the base class (PhysicalLayer) constructor
         PhysicalLayer.__init__(self,sample_rate,duration,f0,f1,amplitute)
 
-        self.RTS_preamble = ['1','0','1','0']
-        self.CTS_preamble = ['0','1','0','1']
-        self.data_preamble = ['1','0','1','1']
-        self.ACK_preamble = ['1','1','0','1']
+        PhysicalLayer.__init__(self,sample_rate,duration,f0,f1,amplitute)
+        self.RTS_preamble = ['1','0','1','0','1','0','1','0']
+        self.CTS_preamble = ['0','1','0','1','0','1','0','1']
+        self.data_preamble = ['1','0','1','1','0','1','1','0']
+        self.ACK_preamble = ['1','1','0','1','1','0','0','1']
         self.id = ['1','1']
         self.process_time = self.duration
         self.DIFS = 3
-        self.SIFS= 2
+        self.SIFS= 1
         self.bit = '0'
-        self.check_time = 0.1
-        self.buffer = ['0','0','0','0']
-
-
+        self.b='2'
+        self.len_RTS = len(self.RTS_preamble)+len(self.id)*2+4
+        # Synchronization pattern to identify the start of a frame
+        self.buffer = ['0','0','0','0','0','0','0','0']
     
     
     def send_RTS( self, reciver_id , data):
         
-        time_req = np.ceil( (len(data) + 10)*self.duration + self.process_time )
+        time_req = np.ceil( (len(data) + self.len_RTS)*self.duration + self.process_time )
         RTS = self.RTS_preamble +self.id + reciver_id + NumToList(time_req)
-
-        #print("RTS sent = ",RTS)
         
         self.transmit(RTS)
             
@@ -394,42 +377,14 @@ class DLL(PhysicalLayer):
     
     def carrierSense(self):
         
-        while(True):
+        for _ in range(self.DIFS):
+            bit = self.read_signal()
+            if(bit=='1'):
+                return 0
+            
+        return 1
                 
             
-            # buff =  self.buffer
-            wait_time = 0
-
-            x = 0
-            
-            for i in range(self.DIFS):
-                bit = self.read_signal()
-                # print(bit,i)
-                if(bit=='1'):
-                    break
-                # buff = buff[1 : ] + [bit]
-
-                    
-                # if ( buff == self.RTS_preamble or buff == self.CTS_preamble):
-                #     sender_id = [self.read_signal(),self.read_signal()]
-                #     reciver_id = [self.read_signal(),self.read_signal()]
-                    
-                #     wait_time = ListToNum([self.read_signal() ,self.read_signal(),self.read_signal(),self.read_signal()])
-
-                #     break
-                # if (  buff == self.data_preamble or buff == self.ACK_preamble):
-                #     sender_id = [self.read_signal(),self.read_signal()]
-                #     reciver_id = [self.read_signal(),self.read_signal()]
-
-                #     break
-                # if( buff !=self.)
-                x+=1 
-                
-            
-            time.sleep(wait_time)
-
-            if( x >= self.DIFS):
-                break
 
 
     def send_data(self , data , reciver_id):
@@ -441,14 +396,15 @@ class DLL(PhysicalLayer):
         """
 
         actual_data = self.data_preamble + [self.bit] +  NumToList(len(data))+ data
-        t=1
+
+
         while(True):
 
-            if(t!=1):
-                time.sleep(random.randint(1,10)*self.DIFS*self.duration)
+            time.sleep(random.randint(1,10)*self.DIFS*self.duration)
             
-            print("hf")
-            self.carrierSense()
+            
+            if ( not self.carrierSense() ):
+                continue
 
             print("carrier sensed")
 
@@ -462,6 +418,7 @@ class DLL(PhysicalLayer):
             
             if(not RTS_sent_succesful):
                 continue
+
             print("CTS recived")
 
             self.transmit(actual_data)
@@ -472,7 +429,6 @@ class DLL(PhysicalLayer):
 
             if(self.CheckForAcg(reciver_id) == 1):
                 break
-            t=t+1
             
         if ( self.bit == '0'):
             self.bit = '1'

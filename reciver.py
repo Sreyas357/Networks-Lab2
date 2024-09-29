@@ -110,53 +110,7 @@ class PhysicalLayer:
             self.stream.write(signal.astype(np.float32).tobytes())
         #print("transmit",bits)
 
-    def is_noise(self, signal):
-        energy = np.sum(signal ** 2) / len(signal)  # Average energy
-
-        #print("energy = ",energy)
-        
-        noise_threshold = 0.25  # Adjust this threshold based on testing
-        return energy < noise_threshold
-    def is_noise_frequency(self, signal):
-        fft_values = np.fft.fft(signal)
-        power = np.abs(fft_values) ** 2  # Power of each frequency bin
-        average_power = np.mean(power)
-        noise_power_threshold = 2000  # Adjust based on characteristics of your environment
-
-        #print("averege power = ",average_power)
-
-        return average_power < noise_power_threshold
-    def is_noise_variability(self, signal):
-        std_dev = np.std(signal)
-        variability_threshold = 0.5  # Adjust based on testing
-        #print("std_dev = ",std_dev)
-        return std_dev < variability_threshold
     
-    def is_noise_autocorrelation(self, signal):
-        autocorr = np.correlate(signal, signal, mode='full')
-        autocorr = autocorr[len(autocorr)//2:]  # Keep only one side
-        significant_peak_threshold = 1000  # Adjust as necessary
-        #print("corr = ",np.max(autocorr))
-        return np.max(autocorr) < significant_peak_threshold
-
-    def butter_bandpass(self,lowcut, highcut, fs, order=5):
-        nyq = 0.5 * fs
-        low = lowcut / nyq
-        high = highcut / nyq
-        b, a = butter(order, [low, high], btype='band')
-        return b, a
-
-    def bandpass_filter(self,data, lowcut, highcut, fs, order=5):
-        b, a = self.butter_bandpass(lowcut, highcut, fs, order=order)
-        y = lfilter(b, a, data)
-        return y
-
-    def is_noise_filtered(self, signal):
-        filtered_signal = self.bandpass_filter(signal, self.f0 - 200, self.f1 + 200, self.sample_rate)
-        #print("band_pass = ", np.mean(np.abs(filtered_signal)))
-        return np.mean(np.abs(filtered_signal)) < 0.25 # Threshold for filtered signal
-        
-
 
     def read_signal(self):
         """
@@ -175,20 +129,8 @@ class PhysicalLayer:
         # Convert the raw byte data to a NumPy array of floats
         signal = np.frombuffer(rawData,dtype = np.float32)
 
-
-        check1 = self.is_noise(signal)
-        check2 = self.is_noise_frequency(signal)
-        check3 = self.is_noise_variability(signal)
-        check4 = self.is_noise_autocorrelation(signal)
-        check5 = self.is_noise_filtered(signal)
-
-
-        if (check1 or check2 or check3 or check4 or check5 ):
-            #print("Detected noise, no valid signal present.")
-            bit = '2'  
-        else:
-            # Proceed with decoding the signal
-            bit=  self.decode_signal(signal)
+        # Proceed with decoding the signal
+        bit=  self.decode_signal(signal)
 
         print(bit)
 
@@ -318,19 +260,19 @@ class DLL(PhysicalLayer):
         """
         # Call the base class (PhysicalLayer) constructor
         PhysicalLayer.__init__(self,sample_rate,duration,f0,f1,amplitute)
-        self.RTS_preamble = ['1','0','1','0']
-        self.CTS_preamble = ['0','1','0','1']
-        self.data_preamble = ['1','0','1','1']
-        self.ACK_preamble = ['1','1','0','1']
-        self.id = ['1','1']
-        self.process_time = 0.5
-        self.DIFS = 0.75
-        self.SIFS= 0.5
+        self.RTS_preamble = ['1','0','1','0','1','0','1','0']
+        self.CTS_preamble = ['0','1','0','1','0','1','0','1']
+        self.data_preamble = ['1','0','1','1','0','1','1','0']
+        self.ACK_preamble = ['1','1','0','1','1','0','0','1']
+        self.id = ['0','1']
+        self.process_time = self.duration
+        self.DIFS = 3
+        self.SIFS= 1
         self.bit = '0'
-        self.check_time = 0.25
         self.b='2'
         # Synchronization pattern to identify the start of a frame
-        self.buffer = ['0','0','0','0']
+        self.buffer = ['0','0','0','0','0','0','0','0']
+        self.len_RTS = len(self.RTS_preamble)+len(self.id)*2+4
 
     
     def send_ack(self,recvr_id):
@@ -343,8 +285,8 @@ class DLL(PhysicalLayer):
     def send_CTS( self, reciver_id ,t):
         
         # RTS_sent = 0
-        time.sleep(self.SIFS)
-        time_req = np.ceil( t + self.process_time  - 10*self.duration )
+        time.sleep(self.SIFS*self.duration)
+        time_req = np.ceil( t + self.process_time  - self.len_RTS*self.duration )
         CTS = self.CTS_preamble +self.id + reciver_id + NumToList(time_req)
         print("CTS trans",CTS)
         
@@ -411,7 +353,7 @@ class DLL(PhysicalLayer):
             
             
 
-            time.sleep(self.SIFS)
+            time.sleep(self.SIFS*self.duration)
 
             data=self.read_data(sender)
             
@@ -420,12 +362,12 @@ class DLL(PhysicalLayer):
             if(data[0]!=self.b):
                 print("data recived = " , data[1: ])
                 self.b=data[0]
-            time.sleep(self.SIFS)
+            time.sleep(self.SIFS*self.duration)
             self.send_ack(sender)
 
             print("ack sent")
 
-            time.sleep(self.SIFS)
+            time.sleep(self.SIFS*self.duration)
         
 
     def finalData(self,data):
@@ -472,10 +414,10 @@ class DLL(PhysicalLayer):
 
     
 
-dll_layer = DLL(sample_rate=44100,duration=0.25,f0=600,f1=1400,amplitute=1)
+dll_layer = DLL(sample_rate=44100,duration=0.05,f0=1000,f1=1200,amplitute=1)
 
 
-for _ in range(30):
-    (dll_layer.read_signal())
+# for _ in range(30):
+#     (dll_layer.read_signal())
 
-#dll_layer.recieve()
+dll_layer.recieve()
