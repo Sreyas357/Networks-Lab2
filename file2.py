@@ -1,5 +1,3 @@
-# file2.py
-from shared import shared_object
+import time
 
-print("File 2: Accessing shared_object")
-print(shared_object.name)
+print(time.time())

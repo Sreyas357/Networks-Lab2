@@ -275,12 +275,8 @@ class DLL(PhysicalLayer):
         self.process_time = self.duration
         self.DIFS = 3
         self.SIFS= 1
-        self.bit = '0'
-        self.b='2'
-        self.time_len_bits = 4
-
-
         
+        self.time_len_bits = 4
         
         # Synchronization pattern to identify the start of a frame
         self.buffer = ['0','0','0','0','0','0']
@@ -356,7 +352,8 @@ class DLL(PhysicalLayer):
     def carrierSense(self):
         
         
-        time.sleep(self.wait_time)
+        if self.wait_time > time.time():
+            time.sleep(self.wait_time-time.time())
         self.wait_time = 0
         
         for _ in range(self.DIFS*3):
@@ -368,7 +365,6 @@ class DLL(PhysicalLayer):
         return 1
                 
 
-
     def send_data(self , data , reciver_id):
         """
         Sends the encoded data through the physical layer.
@@ -377,7 +373,7 @@ class DLL(PhysicalLayer):
             data (list of str): The data bits to be transmitted.
         """
 
-        actual_data = self.sync + self.data_preamble + [self.bit] +  NumToList(len(data))+ data
+        actual_data = self.sync + self.data_preamble +  NumToList(len(data))+ data
 
 
         while(True):
@@ -472,10 +468,6 @@ class DLL(PhysicalLayer):
             if(ACK_recived == 2):
                 break
             
-        if ( self.bit == '0'):
-            self.bit = '1'
-        else:
-            self.bit = '0'
             
     
     def send(self,messages):
@@ -536,6 +528,7 @@ class DLL(PhysicalLayer):
             last4bits = last4bits[1:]+[bit]
 
             if(last4bits == self.RTS_preamble): # RTS
+
                 sender =[self.read_signal() for _ in range(len(self.id))]
                 reciver =[self.read_signal() for _ in range(len(self.id))]
                 time1=ListToNum([self.read_signal() for _ in range(4)])
@@ -552,7 +545,7 @@ class DLL(PhysicalLayer):
                     self.send_CTS(sender,time1)
                     return sender
                 else:
-                    self.wait_time = time1
+                    self.wait_time = time1+time.time()
                     time.sleep(time1)
 
     def read_data(self,sender):
@@ -566,7 +559,7 @@ class DLL(PhysicalLayer):
             last4bits = last4bits[1:]+[bit]
 
             if(last4bits == self.data_preamble):
-                final=[self.read_signal()]
+                final=[]
                 length=ListToNum([self.read_signal() ,self.read_signal() ,self.read_signal() ,self.read_signal() ])
                 
                 print("lenght = ",length)
@@ -592,8 +585,7 @@ class DLL(PhysicalLayer):
             
             time.sleep(self.SIFS*self.duration)
             
-            self.broadcast = 0
-            
+            self.broadcast = 0  
             sender=self.rec_rts()
             
             time.sleep(self.SIFS*self.duration)
@@ -602,12 +594,13 @@ class DLL(PhysicalLayer):
             
             if(data==[]):
                 continue
-            if(data[0]!=self.b):
-                print("data recived = " , data[1: ])
-                self.b=data[0]
-            time.sleep(self.SIFS*self.duration)
-            self.send_ack(sender)
+            
+            print("data recived = " , data[:])
+            
 
+            time.sleep(self.SIFS*self.duration)
+            
+            self.send_ack(sender)
             print("ack sent")
 
             time.sleep(self.SIFS*self.duration)
