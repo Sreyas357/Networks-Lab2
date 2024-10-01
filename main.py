@@ -4,7 +4,7 @@ import copy
 import random
 import math
 import time
-from scipy.signal import butter, lfilter
+
 
 device = {
     '-1': ['1', '1', '1', '1'],
