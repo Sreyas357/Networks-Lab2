@@ -6,6 +6,13 @@ import math
 import time
 from scipy.signal import butter, lfilter
 
+device = {
+    '-1': ['1', '1', '1', '1'],
+    '0': ['0', '0', '0', '1'],
+    '1': ['0', '0', '1', '0'],
+    '2': ['0', '1', '0', '0'],
+    '3': ['1', '0', '0', '0']
+}
 
 def NumToList(t):
 
@@ -61,6 +68,7 @@ class PhysicalLayer:
                                         output=True,
                                         input=True
                                     )
+        
     
     def __del__(self):
 
@@ -72,6 +80,13 @@ class PhysicalLayer:
         self.stream.close()
         self.port.terminate()
 
+    def read_wait_time(self):
+        with open("a.txt","r") as file:
+            wait_time = int(file.read().strip())
+        with open("a.txt","w") as file:
+            file.write('0')
+        return wait_time
+    
     def generate_signal(self,bit):
         """
         Generates an Audio signal corresponding to the given bit
@@ -109,54 +124,7 @@ class PhysicalLayer:
             self.stream.write(signal.astype(np.float32).tobytes())
         #print("transmit",bits)
 
-    def is_noise(self, signal):
-        energy = np.sum(signal ** 2) / len(signal)  # Average energy
-
-        #print("energy = ",energy)
-        
-        noise_threshold = 0.25  # Adjust this threshold based on testing
-        return energy < noise_threshold
-    def is_noise_frequency(self, signal):
-        fft_values = np.fft.fft(signal)
-        power = np.abs(fft_values) ** 2  # Power of each frequency bin
-        average_power = np.mean(power)
-        noise_power_threshold = 2000  # Adjust based on characteristics of your environment
-
-        #print("averege power = ",average_power)
-
-        return average_power < noise_power_threshold
-    def is_noise_variability(self, signal):
-        std_dev = np.std(signal)
-        variability_threshold = 0.5  # Adjust based on testing
-        #print("std_dev = ",std_dev)
-        return std_dev < variability_threshold
-    
-    def is_noise_autocorrelation(self, signal):
-        autocorr = np.correlate(signal, signal, mode='full')
-        autocorr = autocorr[len(autocorr)//2:]  # Keep only one side
-        significant_peak_threshold = 1000  # Adjust as necessary
-        #print("corr = ",np.max(autocorr))
-        return np.max(autocorr) < significant_peak_threshold
-
-    def butter_bandpass(self,lowcut, highcut, fs, order=5):
-        nyq = 0.5 * fs
-        low = lowcut / nyq
-        high = highcut / nyq
-        b, a = butter(order, [low, high], btype='band')
-        return b, a
-
-    def bandpass_filter(self,data, lowcut, highcut, fs, order=5):
-        b, a = self.butter_bandpass(lowcut, highcut, fs, order=order)
-        y = lfilter(b, a, data)
-        return y
-
-    def is_noise_filtered(self, signal):
-        filtered_signal = self.bandpass_filter(signal, self.f0 - 200, self.f1 + 200, self.sample_rate)
-        #print("band_pass = ", np.mean(np.abs(filtered_signal)))
-        return np.mean(np.abs(filtered_signal)) < 0.25 # Threshold for filtered signal
-        
-
-
+   
     def read_signal(self):
         """
         Reads an incoming audio signal and decodes it into a bit.
@@ -307,25 +275,36 @@ class DLL(PhysicalLayer):
         PhysicalLayer.__init__(self,sample_rate,duration,f0,f1,amplitute)
 
         PhysicalLayer.__init__(self,sample_rate,duration,f0,f1,amplitute)
-        self.RTS_preamble = ['1','0','1','0','1','0','1','0']
-        self.CTS_preamble = ['0','1','0','1','0','1','0','1']
-        self.data_preamble = ['1','0','1','1','0','1','1','0']
-        self.ACK_preamble = ['1','1','0','1','1','0','0','1']
-        self.id = ['1','1']
+        self.RTS_preamble = ['1','1','0','0','1','1']
+        self.CTS_preamble = ['0','1','1','1','0','1']
+        self.data_preamble = ['1','0','1','1','0','0']
+        self.ACK_preamble = ['1','0','0','1','1','0']
+        self.id = device['3']
         self.process_time = self.duration
         self.DIFS = 3
         self.SIFS= 1
         self.bit = '0'
         self.b='2'
-        self.len_RTS = len(self.RTS_preamble)+len(self.id)*2+4
+        self.time_len_bits = 4
+        
         # Synchronization pattern to identify the start of a frame
-        self.buffer = ['0','0','0','0','0','0','0','0']
+        self.buffer = ['0','0','0','0','0','0']
+        self.sync = ['0','0']
+        
+        self.len_RTS = len(self.sync) + len(self.RTS_preamble)+len(self.id)*2+ self.time_len_bits
+        self.len_CTS = self.len_RTS
+        self.len_ack = len(self.sync) + len(self.ACK_preamble)+len(self.id)*2
+        
     
     
     def send_RTS( self, reciver_id , data):
         
-        time_req = np.ceil( (len(data) + self.len_RTS)*self.duration + self.process_time )
-        RTS = self.RTS_preamble +self.id + reciver_id + NumToList(time_req)
+        if reciver_id != device['0']:
+            time_req = np.ceil( (len(data) + self.len_RTS + self.len_CTS + self.len_ack )*self.duration  + (self.SIFS*4)*self.duration + 1 )
+        else:
+            time_req = np.ceil( (len(data) + self.len_RTS + self.len_CTS * 2 + self.len_ack * 2 )*self.duration  + (self.SIFS*8)*self.duration + 1 )
+
+        RTS = self.sync +self.RTS_preamble +self.id + reciver_id + NumToList(time_req)
         
         self.transmit(RTS)
             
@@ -334,7 +313,7 @@ class DLL(PhysicalLayer):
 
         CTS_recived = 0
         
-        buff = self.buffer
+        buff = copy.deepcopy(self.buffer)
 
         for i in range(20):
             
@@ -343,13 +322,15 @@ class DLL(PhysicalLayer):
 
             if ( buff == self.CTS_preamble):
 
-                sender = [self.read_signal() , self.read_signal()]
-                reciver = [self.read_signal() , self.read_signal()]
+                sender = [self.read_signal() for _ in range(len(self.id))]
+                reciver = [self.read_signal() for _ in range(len(self.id))]
                 wait_time = ListToNum([self.read_signal() ,self.read_signal(),self.read_signal(),self.read_signal()])
 
-                if( sender == reciver_id and reciver == self.id ):
-                    CTS_recived = 1
+                if(  sender == reciver_id and reciver == self.id ):
+                    CTS_recived = 2
                     break
+                else:
+                    time.sleep(wait_time)
         
         return CTS_recived
 
@@ -358,7 +339,7 @@ class DLL(PhysicalLayer):
 
         ack_got = 0
 
-        buff = self.buffer
+        buff = copy.deepcopy(self.buffer)
 
         for i in range(20):
             
@@ -366,25 +347,28 @@ class DLL(PhysicalLayer):
             buff = buff[1 : ] + [bit]
 
             if ( buff == self.ACK_preamble):
-                sender = [self.read_signal() , self.read_signal()]
-                reciver = [self.read_signal() , self.read_signal()]
+                sender = [self.read_signal() for _ in range(len(self.id))]
+                reciver = [self.read_signal() for _ in range(len(self.id))]
                 
                 if( sender == reciver_id and reciver == self.id ):
-                    ack_got = 1
+                    ack_got = 2
                     break
         
         return ack_got
     
     def carrierSense(self):
         
-        for _ in range(self.DIFS):
+        wait_time = self.read_wait_time() 
+        time.sleep(wait_time)
+        
+        for _ in range(self.DIFS*3):
             bit = self.read_signal()
             if(bit=='1'):
+                time.sleep(1)
                 return 0
             
         return 1
                 
-            
 
 
     def send_data(self , data , reciver_id):
@@ -395,28 +379,59 @@ class DLL(PhysicalLayer):
             data (list of str): The data bits to be transmitted.
         """
 
-        actual_data = self.data_preamble + [self.bit] +  NumToList(len(data))+ data
+        actual_data = self.sync + self.data_preamble + [self.bit] +  NumToList(len(data))+ data
 
 
         while(True):
 
-            time.sleep(random.randint(1,10)*self.DIFS*self.duration)
+            # time.sleep(random.randint(1,10)*self.DIFS*self.duration)
+            if self.id == device['2']:
+                time.sleep(5*self.DIFS*self.duration)
+            elif self.id == device['3']:
+                time.sleep(10*self.DIFS*self.duration)
+            elif self.id == device['1']:
+                pass
             
-            
-            if ( not self.carrierSense() ):
-                continue
+            while ( not self.carrierSense() ):
+                pass
 
             print("carrier sensed")
 
-            self.send_RTS(reciver_id,data)
+            self.send_RTS(reciver_id,actual_data)
             print("RTS sent ")
             time.sleep(self.SIFS*self.duration)
             
-            RTS_sent_succesful = self.recive_CTS(reciver_id)
+            RTS_sent_succesful = 0
+            if reciver_id != device['0']:
+                RTS_sent_succesful = self.recive_CTS(reciver_id)
+                time.sleep(self.SIFS*self.duration)
+            else:
+                if self.id == device['1']:
+                    
+                    time.sleep((self.len_CTS)*self.duration)
+                    RTS_sent_succesful += self.recive_CTS(device['2'])/2
+                    time.sleep(self.SIFS*self.duration)
+                    RTS_sent_succesful += self.recive_CTS(device['3'])/2
+                    time.sleep(self.SIFS*self.duration)
+                
+                if self.id == device['2']:
+                    
+                    RTS_sent_succesful += self.recive_CTS(device['1'])/2
+                    time.sleep((self.len_CTS)*self.duration)
+                    RTS_sent_succesful += self.recive_CTS(device['3'])/2
+                    time.sleep(self.SIFS*self.duration)
+                    
+                if self.id == device['3']:
+                    
+                    RTS_sent_succesful += self.recive_CTS(device['1'])/2
+                    time.sleep(self.SIFS*self.duration)
+                    RTS_sent_succesful += self.recive_CTS(device['2'])/2
+                    time.sleep(self.SIFS*self.duration)
+                    time.sleep((self.len_CTS)*self.duration)
             
-            time.sleep(self.SIFS*self.duration)
             
-            if(not RTS_sent_succesful):
+            
+            if( RTS_sent_succesful != 2):
                 continue
 
             print("CTS recived")
@@ -426,8 +441,37 @@ class DLL(PhysicalLayer):
             print("data transmitted = ",actual_data)
 
             time.sleep(self.SIFS*self.duration)
-
-            if(self.CheckForAcg(reciver_id) == 1):
+            
+            ACK_recived = 0
+            if reciver_id != device['0']:
+                ACK_recived = self.CheckForAcg(reciver_id)
+                time.sleep(self.SIFS*self.duration)
+            else:
+                if self.id == device['1']:
+                    
+                    time.sleep((self.len_ack)*self.duration)
+                    ACK_recived += self.CheckForAcg(device['2'])/2
+                    time.sleep(self.SIFS*self.duration)
+                    ACK_recived += self.CheckForAcg(device['3'])/2
+                    time.sleep(self.SIFS*self.duration)
+                
+                if self.id == device['2']:
+                    
+                    ACK_recived += self.CheckForAcg(device['1'])/2
+                    time.sleep((self.len_ack)*self.duration)
+                    ACK_recived += self.CheckForAcg(device['3'])/2
+                    time.sleep(self.SIFS*self.duration)
+                    
+                if self.id == device['3']:
+                    
+                    ACK_recived += self.CheckForAcg(device['1'])/2
+                    time.sleep(self.SIFS*self.duration)
+                    ACK_recived += self.CheckForAcg(device['2'])/2
+                    time.sleep(self.SIFS*self.duration)
+                    time.sleep((self.len_ack)*self.duration)
+            
+            
+            if(ACK_recived == 2):
                 break
             
         if ( self.bit == '0'):
@@ -439,10 +483,30 @@ class DLL(PhysicalLayer):
 
 
 
-dll_layer = DLL(sample_rate=44100,duration=0.25,f0=800,f1=1200,amplitute=1)
+dll_layer = DLL(sample_rate=44100,duration=0.25,f0=1000,f1=1200,amplitute=1)
 
-# message=list(input())
-# start = time.time()
-# while(time.time() - start < 5 ):
-#     print(dll_layer.read_signal())
-dll_layer.send_data(['1','0','1','0','1','0'],['0','1'])
+# msg_and_dest_1 = input("Enter Message and Destination 1: ")
+# msg1, dest1 = msg_and_dest_1.split(' ')
+# msg1 = list(msg1)
+# dest1 = device[dest1]
+# msg_and_dest_2 = input("Enter Message and Destination 2: ")
+# msg2, dest2 = msg_and_dest_2.split(' ')
+# msg2 = list(msg2)
+# dest2 = device[dest2]
+
+# inp = input("Enter something to send the first message: ")
+# if inp:
+#     if dest1 == ['1', '1', '1', '1']:
+#         pass
+#     else:
+#         dll_layer.send_data(msg1, dest1)
+
+# inp = input("Enter something to send the second message: ")
+# if inp:
+#     if dest2 == ['1', '1', '1', '1']:
+#         pass
+#     else:
+#         dll_layer.send_data(msg2, dest2)
+
+# dll_layer.send_data(['1','0','1','0','1','0','0','1','1','1'],device['1'])
+dll_layer.send_data(['1','1','1','0','0','1','0','1','0'],device['0'])

@@ -7,6 +7,14 @@ import time
 from scipy.signal import butter, lfilter
 
 
+device = {
+    '-1': ['1', '1', '1', '1'],
+    '0': ['0', '0', '0', '1'],
+    '1': ['0', '0', '1', '0'],
+    '2': ['0', '1', '0', '0'],
+    '3': ['1', '0', '0', '0']
+}
+
 
 # Base class representing the Physical Layer in a communication system
 def NumToList(t):
@@ -72,6 +80,7 @@ class PhysicalLayer:
         self.stream.stop_stream()
         self.stream.close()
         self.port.terminate()
+    
 
     def generate_signal(self,bit):
         """
@@ -260,64 +269,111 @@ class DLL(PhysicalLayer):
         """
         # Call the base class (PhysicalLayer) constructor
         PhysicalLayer.__init__(self,sample_rate,duration,f0,f1,amplitute)
-        self.RTS_preamble = ['1','0','1','0','1','0','1','0']
-        self.CTS_preamble = ['0','1','0','1','0','1','0','1']
-        self.data_preamble = ['1','0','1','1','0','1','1','0']
-        self.ACK_preamble = ['1','1','0','1','1','0','0','1']
-        self.id = ['0','1']
+        self.RTS_preamble = ['1','1','0','0','1','1']
+        self.CTS_preamble = ['0','1','1','1','0','1']
+        self.data_preamble = ['1','0','1','1','0','0']
+        self.ACK_preamble = ['1','0','0','1','1','0']
+        self.id = device['3']
         self.process_time = self.duration
         self.DIFS = 3
         self.SIFS= 1
         self.bit = '0'
         self.b='2'
+        self.time_len_bits = 4
         # Synchronization pattern to identify the start of a frame
-        self.buffer = ['0','0','0','0','0','0','0','0']
-        self.len_RTS = len(self.RTS_preamble)+len(self.id)*2+4
+        self.buffer = ['0','0','0','0','0','0']
+        
+        self.sync = ['0','0']
+        
+        self.len_RTS = len(self.sync) + len(self.RTS_preamble)+len(self.id)*2+ self.time_len_bits
+        self.len_CTS = self.len_RTS
+        self.len_ack = len(self.sync) + len(self.ACK_preamble)+len(self.id)*2
+        self.broadcast = 0
 
     
     def send_ack(self,recvr_id):
         
+        if self.broadcast:
+            if self.id == device['2']:
+                time.sleep((self.len_ack)*self.duration)
+            elif self.id == device['3']:
+                time.sleep((self.len_ack*2)*self.duration)
+            elif self.id == device['1']:
+                pass
+        
         ack=[]
-        ack =self.ACK_preamble + self.id + recvr_id
+        ack =self.sync + self.ACK_preamble + self.id + recvr_id
         self.transmit(ack)
+        
+        # if self.broadcast:
+        #     if self.id == device['2']:
+        #         time.sleep((self.len_ack)*self.duration + 1)
+        #     elif self.id == device['1']:
+        #         time.sleep((self.len_ack*2)*self.duration + 1)
+        #     elif self.id == device['3']:
+        #         pass
         # return ack
     
-    def send_CTS( self, reciver_id ,t):
+    def send_CTS( self, sender_id ,t):
         
         # RTS_sent = 0
+        if self.broadcast:
+            if self.id == device['2']:
+                time.sleep((self.len_CTS)*self.duration)
+            elif self.id == device['3']:
+                time.sleep((self.len_CTS*2)*self.duration)
+            elif self.id == device['1']:
+                pass
+
         time.sleep(self.SIFS*self.duration)
-        time_req = np.ceil( t + self.process_time  - self.len_RTS*self.duration )
-        CTS = self.CTS_preamble +self.id + reciver_id + NumToList(time_req)
+        time_req = np.ceil( t  - self.len_RTS*self.duration )
+        CTS = self.sync +self.CTS_preamble +self.id + sender_id + NumToList(time_req)
         print("CTS trans",CTS)
         
         self.transmit(CTS)
+
+        if self.broadcast:
+            if self.id == device['2']:
+                time.sleep((self.len_CTS)*self.duration)
+            elif self.id == device['3']:
+                pass
+            elif self.id == device['1']:
+                time.sleep((self.len_CTS*2)*self.duration )
     
     def rec_rts(self):
 
-        last4bits=self.buffer
+        last4bits=copy.deepcopy(self.buffer)
         
         while(True):
             bit =   self.read_signal()
             last4bits = last4bits[1:]+[bit]
 
             if(last4bits == self.RTS_preamble): # RTS
-                sender =[self.read_signal(),self.read_signal()]
-                reciver =[self.read_signal(),self.read_signal()]
+                sender =[self.read_signal() for _ in range(len(self.id))]
+                reciver =[self.read_signal() for _ in range(len(self.id))]
                 time1=listtoNum([self.read_signal() for _ in range(4)])
 
                 print("recived RTS from ", sender," to ",reciver)
                 
-                if(reciver == self.id):
+                if(reciver == self.id or ( reciver == device['0'] and sender != self.id )):
+                   
+                    if (reciver == device['0'] ):
+                       self.broadcast = 1
+
+                    
                     print("Send CTS to " , sender)
                     self.send_CTS(sender,time1)
                     return sender
                 else:
+                    if (sender != self.id):
+                        with open("a.txt", 'w') as file:
+                            file.write(str(time1))
                     time.sleep(time1)
 
     def read_data(self,sender):
         
         #print("READING DATA")
-        last4bits=self.buffer
+        last4bits=copy.deepcopy(self.buffer)
         final = []
         
         for _ in range(20):
@@ -349,10 +405,12 @@ class DLL(PhysicalLayer):
         """
         while(True):
             
+            time.sleep(self.SIFS*self.duration)
+            
+            self.broadcast = 0
+            
             sender=self.rec_rts()
             
-            
-
             time.sleep(self.SIFS*self.duration)
 
             data=self.read_data(sender)
@@ -414,7 +472,7 @@ class DLL(PhysicalLayer):
 
     
 
-dll_layer = DLL(sample_rate=44100,duration=0.05,f0=1000,f1=1200,amplitute=1)
+dll_layer = DLL(sample_rate=44100,duration=0.25,f0=1000,f1=1200,amplitute=1)
 
 
 # for _ in range(30):
